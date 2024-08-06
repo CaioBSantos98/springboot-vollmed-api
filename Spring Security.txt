@@ -1,0 +1,176 @@
+ANOTAÇÕES PARA O SPRING SECURITY
+
+O processo de validação para uma aplicação Web é diferente do precesso de uma
+REST API.
+
+Ao adicionar o spring security ao projeto as configurações de segurança padrão
+barram todas as requisições para nossa API. retornando codigo http 401 - não autorizado.
+
+Comportamento padrão do Spring Security: ele bloqueia todas as rotas da nossa API, 
+disponibiliza um formulário de login - que possui um usuário padrão 
+chamado user e a senha devemos copiar do console ao inicializar o projeto.
+
+1 - ALTERANDO COMPORTAMENTO PADRAO DO SPRING DE STATEFUL PARA STATELESS
+
+Para alterar esse comportamento padrão é preciso criar algumas classes 
+de configurações para o Spring Security.
+Na parte de autenticação, o Spring Security detecta algumas coisas de forma
+automática no projeto. Por exemplo, a classe que vai ter a 
+lógica de usar o repository e acessar o banco de dados para realizar a consulta.
+Ele procura por uma classe específica no projeto. Portanto, precisamos criar essa 
+classe seguindo o padrão do Spring e, com isso, ele consegue identificá-la 
+no projeto e usá-la para fazer o processo de autenticação.
+
+Criar uma classe de AutenticacaoService com a anotação @Service, para o Spring
+identificar essa classe como um componente do tipo serviço. Assim, o Spring carrega 
+a classe e executa o serviço ao inicializarmos o projeto. O Spring também precisa 
+ser informado que esta classe é a responsável pelo serviço de autenticação. Para isso
+precisamos implementar na nossa classe uma interface do Spring Security chamada 
+UserDetailsService. Com isso, o Spring será o responsável por chamar essa classe.
+Implementando os metodos dessa interface, precisamos declarar um método no nosso
+repositorio que retorna UserDetails localizando pelo nome do usuario (login).
+Ex: UserDetails findByLogin(String login);
+
+A próxima alteração é configurar o Spring Security para ele não usar 
+o processo de segurança tradicional, o stateful. Como estamos trabalhando com 
+uma API Rest, o processo de autenticação precisa ser stateless.
+Para isso vamos criar uma classe Java de SecurityConfigurations com as anotações 
+@Configuration (para o Spring identificar a classe e a carregar no projeto) e
+@EnableWebSecurity (para informar ao Spring que vou personalizar as configurações de segurança)
+
+Dentro da classe vamos criar um método que retorna um objeto SecurityFilterChain
+recebendo como parametro um argumento do tipo HttpSecurity
+Com esse argumento conseguimos utilizar metodos para cofigurar o comportamento de autenticacao.
+primeiro desabilitar proteção contra ataques do tipo CSRF, já que o usuario vai ser
+autenticado via tokens. Depois com esse mesmo argumento, criar uma politica de sessao
+do tipo STATELESS. Por fim, colocar uma anotação @Bean nesse método porque
+o Spring não lê o método de forma automática. No caso, o @Bean, que serve exibir 
+o retorno desse método, que estamos devolvendo um objeto SecurityFilterChain.
+Para devolvermos um objeto para o Spring, usamos a anotação @Bean.
+
+2 - INICIAR O PROCESSO DE AUTENTICAÇÃO RECEBENDO O DTO DE AUTENTICAÇÃO.
+
+
+Criar o controller da url para autenticação, criar o método que vai ser chamado 
+pelo controler, criar o record que vai receber as informações do front.
+No arquivo do controller, precisamos usar a classe AuthenticationManager do Spring,
+responsável por disparar o processo de autenticação.
+	@Autowired
+	private AuthenticationManager manager;
+Apesar da classe AuthenticationManager ser uma classe do Spring, ele não injeta o objeto
+de forma automática, precisamos configurar isso na classe de configurações do Spring Security.
+Portanto, na classe de configuração vamos criar um método que retorna um
+AuthenticationManager e recebe um parametro do tipo AuthenticationConfiguration.
+nesse parametro da classe AuthenticationConfiguration tem um método getAuthenticationManager
+que cria o objeto AuthenticationManager que iremos retornar. Por fim,
+incluiremos a anotação @Bean no metodo que retorna o AuthenticationManager.
+Agora, precisamos consultar o banco de dados e disparar o processo de autenticação.
+Criar o metodo que recebe os dados da requisição e utilizar o objeto AuthenticationManager
+para fazer a autenticação e guardar numa variavel.
+O método desse objeto precisa receber um parametro do tipo UsernamePasswordAuthenticationToken
+que é tipo um DTO do proprio Spring para usuario e senha. Utilizamos os dados do nosso proprio DTO
+de usuario e senha para instanciar esse UsernamePasswordAuthenticationToken. Teremos um metodo
+mais ou menos da seguinte forma:
+    @PostMapping
+    public ResponseEntity efetuarLogin(@RequestBody @Valid DadosAutenticacao dados) {
+        var token = new UsernamePasswordAuthenticationToken(dados.login(), dados.senha());
+        var authentication = manager.authenticate(token);
+
+        return ResponseEntity.ok().build();
+    }
+
+Importante lembrar de definir também na nossa classe de configuração do Spring Security
+qual o PasswordEncoder estamos utilizando no nosso projeto.
+para o caso do BCrypt teriamos um método da seguinte maneira:
+	@Bean
+	public PasswordEncoder passwordEncoder() {
+    		return new BCryptPasswordEncoder();
+	}
+Com isso, temos o nosso controller responsável pelo processo de autenticação.
+Porém ainda não devolvemos nenhum token para o cliente.
+
+3 - DEVOLVENDO UM TOKEN PARA O CLIENTE
+
+Adicionar a biblioteca Auth0 ao projeto que será utilizada para gerar o token,
+seguindo o padrão JWT. Após isso, criar uma classe TokenService que vai ser 
+responsavel pela geração, validação e o que mais estiver relacionado aos tokens.
+Lembrar de passar a notação @Service para essa classe para que o Spring possa
+reconhecê-la. Criar um metodo dentro da classe que retorna uma String recebendo
+como parametro um Usuario e consultar a documentação da biblioteca para como criar
+um token, e assim, utilizá-lo no nosso método. Obs: O ideal é que os tokens da 
+API tenham data de validade.
+
+4 - CRIANDO FILTRO PARA AS REQUISIÇÕES QUE NECESSITAM DE UM TOKEN
+
+Vamos criar um filtro no projeto, para interceptar requisições. O que queremos 
+é fazer a validação do token antes que ele caia no controller.
+Para isso vamos criar uma classe com a anotação @Component que herda de
+OncePerRequestFilter
+Dentro desse método vamos fazer as nossas validações e depois passaremos o código 
+filterChain.doFilter(request, response), para seguir o fluxo da requisição aos controllers.
+
+5 - RECUPERANDO O TOKEN DO CABECALHO AUTHORIZATION DA REQUISICAO
+Criando uma funcao recuperarToken() que recebe como paramento a request
+e devolve uma String;
+Usamos o request.getHeader("Authorization"), verificamos se é nulo:
+Caso seja, throw new RuntimeException() falando que o token nao veio no Header
+senão, retorna o request.getHeader("Authorization").
+
+6 - VALIDAÇÃO DO TOKEN RECEBIDO NO HEADER
+Para isso, vamos precisar do nosso TokenService. Nele vamos criar um método
+getSubject() que recebe como parametro uma String tokenJWT.
+Dentro da função vamos utilizar o codigo de validação disponibilizado pela
+biblioteca que geramos nosso token, no caso o Auth0.
+
+7 - MAIS UMA CONFIGURAÇÃO DO SECURITY CONFIGS
+Precisamos dizer ao Spring quais requisições precisam estar autenticadas,
+e quais são permitidas.
+Para isso vamos adaptar o securityFilterChain da seguinte forma:
+@Bean
+    public SecurityFilterChain securityFilterChain(HttpSecurity http) throws Exception {
+        return http.csrf(csrf -> csrf.disable())
+                .sessionManagement(sm -> sm.sessionCreationPolicy(SessionCreationPolicy.STATELESS))
+                .authorizeHttpRequests(req -> {
+                    req.requestMatchers("/login").permitAll();
+                    req.anyRequest().authenticated();
+                })
+                .build();
+    }
+Ou seja, estamos dizendo que para requisição "/login", é permitido acessar
+sem estar autenticado. Para qualquer outra requisição, é preciso estar
+autenticado.
+
+8 - COMO DIZER AO SPRING QUE ESTAMOS AUTENTICADOS
+Para pedir para que o Spring considere que a pessoa está logada, acessaremos outra vez SecurityFilter.
+Precisamos recuperar o usuario do nosso repositorio através do subject que veio no Token.
+Após isso vamos declarar a seguinte variavel:
+var authentication = new UsernamePasswordAuthenticationToken(usuario, null, usuario.getAuthorities());
+Por fim setamos o usuario como autenticado com o seguinte codigo:
+SecurityContextHolder.getContext().setAuthentication(authentication);
+Com isso, o Spring considerará que o usuário está logado.
+
+9 - DEFINIR A ORDEM DOS FILTROS AO SPRING
+Se não fizermos isso, por padrão, o Spring executará primeiro o filtro dele. 
+Precisamos que ele chame primeiro o que configuramos, para verificar se o
+token está vindo e autenticar o usuário. Faremos essa alteração na classe SecurityConfigurations.
+Vamos fazer um @Autowired pra uma classe SecurityFilter:
+@Autowired
+    private SecurityFilter securityFilter;
+
+Depois atualizar a securityFilterChain da seguinte maneira:
+@Bean
+    public SecurityFilterChain securityFilterChain(HttpSecurity http) throws Exception {
+        return http.csrf(csrf -> csrf.disable())
+                .sessionManagement(sm -> sm.sessionCreationPolicy(SessionCreationPolicy.STATELESS))
+                .authorizeHttpRequests(req -> {
+                    req.requestMatchers("/login").permitAll();
+                    req.anyRequest().authenticated();
+                })
+                .addFilterBefore(securityFilter, UsernamePasswordAuthenticationFilter.class)
+                .build();
+    }
+
+ 
+
+
+
